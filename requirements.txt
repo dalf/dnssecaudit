@@ -1,0 +1,10 @@
+dnspython==1.16.0
+dnsviz @ git+https://github.com/dnsviz/dnsviz.git@master
+libnacl==1.7.1
+M2Crypto==0.36.0
+pygraphviz==1.6
+searxinstances @ git+https://github.com/searx/searx-instances/@master
+httpx[http2]
+PyYAML==5.3.1
+rfc3986==1.4.0
+idna==2.10
