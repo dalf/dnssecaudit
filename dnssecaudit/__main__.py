@@ -32,6 +32,7 @@ def get_record(check_result, host, record_name, hosts=set()):
     hosts.add(host)
 
     value = check_result.get(host, {}).get(record_name, {})
+    print(json.dumps(value, indent=4))
     rdata = value.get('<rdata>', {})
 
     for item in list(rdata.keys()):
@@ -62,6 +63,9 @@ def is_secure(check_result):
                     add_status(key, rdtype_value, rdtype_key)
                 for rdata_key, rdata_value in zone.get('<rdata>', {}):
                     add_status(key, rdata_value, rdata_key)
+
+    if len(status) > 1 and 'SECURE' in status:
+        status.remove('SECURE')
     return status
 
 
@@ -100,16 +104,20 @@ if __name__ == "__main__":
     probe_config = probe.ProbeConfig(rdtypes=rdtypes)
     probe.init()
     with httpx.Client(http2=True) as client:
-        for instance in instances:
-            available = False
+        i = 1
+        for instance in instances.keys():
+            hostname = None
             try:
                 response = client.get(instance)
                 response.raise_for_status()
-                print("%s, %i", instance, response.status_code)
+                url = str(response.url)
+                hostname = urlparse(url).hostname
             except Exception as e:
-                logger.exception("Error: %s", instance, e)
-            finally:
-                parsed_url = urlparse(str(response.url))
-                check_simple(parsed_url.hostname)
-                check_dnssec(parsed_url.hostname, probe_config, cache)
+                # logger.error("%s Error: %s", str(instance), str(e))
+                pass
+            else:
+                print(i, instance)
+                check_simple(hostname)
+                check_dnssec(hostname, probe_config, cache)
                 cache = prune_cache(cache)
+                i += 1

@@ -183,6 +183,7 @@ def _probe(
             transport_manager=tm,
             th_factories=config.th_factories,
             resolver=resolver,
+            logger=logger,
         )
         return a.analyze()
     # report exceptions related to network connectivity
