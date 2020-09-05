@@ -1,11 +1,10 @@
 import logging
 import json
-import dns.rdatatype
 
 import httpx
-from . import probe, check, simple
 import searxinstances.model
 from urllib.parse import urlparse
+from . import dnssec, simple
 
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s:%(message)s")
@@ -18,23 +17,20 @@ def initialize_logging():
                         'httpx.dispatch.connection_pool', 'httpx.dispatch.connection',
                         'httpx.dispatch.http2', 'httpx.dispatch.http11',
                         'ipwhois.rdap', 'ipwhois.ipwhois', 'ipwhois.net', 'ipwhois.asn',
-                        'urllib3.connectionpool', 'dnsviz.analysis.online', 'dnsviz.analysis.offline'):
+                        'urllib3.connectionpool', 'dnspython', 'dnsviz.analysis.online', 'dnsviz.analysis.offline',
+                        'dnssec'):
         logging.getLogger(logger_name).setLevel(logging.WARNING)
-    for logginer_name in ('dnsviz.analysis.online', 'dnsviz.analysis.offline', 'dnspython'):
-        logging.getLogger(logger_name).setLevel(logging.DEBUG)
 
 
-def get_record(check_result, host, record_name, hosts=set()):
+def get_record(check_result, hostname, record_name, hosts=set()):
     result = list()
-    if host in hosts:
+    if hostname in hosts:
         return result
 
-    hosts.add(host)
+    hosts.add(hostname)
 
-    value = check_result.get(host, {}).get(record_name, {})
-    print(json.dumps(value, indent=4))
+    value = check_result.get(hostname, {}).get(record_name, {})
     rdata = value.get('<rdata>', {})
-
     for item in list(rdata.keys()):
         if item.startswith('CNAME '):
             result = result + get_record(check_result, item[6:-1], record_name, hosts)
@@ -43,66 +39,35 @@ def get_record(check_result, host, record_name, hosts=set()):
     return result
 
 
-def is_secure(check_result):
-    status = set()
+def process_hostname(hostname: str, probe_config):
+    result = dnssec.analyze(hostname, probe_config)
+    if result:
+        # status
+        status = dnssec.get_status(result)
+        print(" ", hostname, "status=", status)
 
-    def add_status(key, obj, name):
-        status.add(obj.get('<status>', 'UNKNOWN'))
-        if '<status>' not in obj or obj['<status>'] != 'SECURE':
-            return False
-        return True
-
-    for key, values in check_result.items():
-        if '<delegation>' in values:
-            delegation = values['<delegation>']
-            add_status(key, delegation, 'deletegation')
-        if '<zone>' in values:
-            zone = values['<zone>']
-            if not add_status(key, zone, "zone"):
-                for rdtype_key, rdtype_value in zone.get('<rdtype>', {}):
-                    add_status(key, rdtype_value, rdtype_key)
-                for rdata_key, rdata_value in zone.get('<rdata>', {}):
-                    add_status(key, rdata_value, rdata_key)
-
-    if len(status) > 1 and 'SECURE' in status:
-        status.remove('SECURE')
-    return status
+        # additional informations
+        last_key = list(result.keys())[-1]
+        a_record = get_record(result, last_key, 'A')
+        aaaa_record = get_record(result, last_key, 'AAAA')
+        print(" ", hostname, "->", last_key)
+        print(" ", hostname, "A=", a_record)
+        print(" ", hostname, "AAAA=", aaaa_record)
+    else:
+        print(" ", hostname, "Error")
 
 
-def check_dnssec(host: str, probe_config, cache):
-    print(" ", host, "probe")
-    analysis_structured = probe.probe(probe_config, [host], cache=cache)
-    print(" ", host, "check")
-    graph, check_result = check.check(analysis_structured)
-    if check_result is not None and graph is not None:
-        last_key = list(check_result.keys())[-1]
-        status = is_secure(check_result)
-        a_record = get_record(check_result, last_key, 'A')
-        aaaa_record = get_record(check_result, last_key, 'AAAA')
-        print(" ", host, "->", last_key)
-        print(" ", host, "status=", status)
-        print(" ", host, "A=", a_record)
-        print(" ", host, "AAAA=", aaaa_record)
-        output_filename='{0}.jpg'.format(host)
-        graph.draw(format='jpg', path=output_filename)
-
-
-def check_simple(host: str):
-    result = simple.get_info(host)
-    print(" ", host, result)
-
-
-def prune_cache(cache):
-    return { key: value for key, value in cache.items() if str(key).count('.') <= 1 }
+def check_simple(hostname: str):
+    result = simple.get_info(hostname)
+    print(" ", hostname, result)
 
 
 if __name__ == "__main__":
     initialize_logging()
     cache = {}
-    rdtypes = [dns.rdatatype.from_text(x) for x in ['A', 'AAAA']]
     instances = searxinstances.model.load()
-    probe_config = probe.ProbeConfig(rdtypes=rdtypes)
-    probe.init()
+    dnssec.init()
+    probe_config = dnssec.get_config()
     with httpx.Client(http2=True) as client:
         i = 1
         for instance in instances.keys():
@@ -116,8 +81,8 @@ if __name__ == "__main__":
                 # logger.error("%s Error: %s", str(instance), str(e))
                 pass
             else:
-                print(i, instance)
-                check_simple(hostname)
-                check_dnssec(hostname, probe_config, cache)
-                cache = prune_cache(cache)
-                i += 1
+                if hostname not in ['search.jigsaw-security.com']:
+                    print(i, instance)
+                    check_simple(hostname)
+                    process_hostname(hostname, probe_config)
+                    i += 1

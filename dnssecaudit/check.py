@@ -13,7 +13,7 @@ STATUS_VALUES = set(['SECURE', 'BOGUS', 'INSECURE', 'NON_EXISTENT', 'VALID', 'IN
     'INVALID_SIG', 'INVALID', 'INVALID_DIGEST', 'INCOMPLETE', 'LAME', 'INVALID_TARGET', 'ERROR', 'WARNING'])
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 def _errors_warnings_full(status, warnings, errors):

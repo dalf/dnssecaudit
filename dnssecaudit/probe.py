@@ -26,7 +26,11 @@ from dnsviz.analysis import (
 )
 from dnsviz.format import humanize_name, latin1_binary_to_string as lb2s
 from dnsviz.ipaddr import IPAddr
-from dnsviz.query import DiagnosticQuery, QuickDNSSECQuery, StandardRecursiveQueryCD
+from dnsviz.query import (
+    DiagnosticQuery, QuickDNSSECQuery, StandardRecursiveQueryCD, DNSSECQuery, AddServerCookieOnBADCOOKIE,
+    RemoveEDNSOptionOnRcodeHandler, DisableEDNSOnFormerrHandler, DisableEDNSOnRcodeHandler, ReduceUDPMaxPayloadOnTimeoutHandler, RemoveEDNSOptionOnTimeoutHandler,
+    ClearEDNSFlagOnTimeoutHandler, DisableEDNSOnTimeoutHandler, ChangeTimeoutOnTimeoutHandler
+)
 from dnsviz.resolver import Resolver, PrivateFullResolver
 from dnsviz import transport
 from dnsviz.util import get_client_address, get_root_hints
@@ -34,9 +38,7 @@ from dnsviz.commands.probe import A_ROOT_IPV4, A_ROOT_IPV6
 from dnsviz.transport import DNSQueryTransportHandlerFactory
 
 
-logging.basicConfig(level=logging.WARNING, format="%(message)s")
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 class CustomQueryMixin:
@@ -60,6 +62,35 @@ class ProbeConfig(typing.NamedTuple):
     th_factories: typing.Optional[typing.Iterable[DNSQueryTransportHandlerFactory]] = None
 
 
+class CustomDiagnosticQuery(DNSSECQuery):
+    '''A robust query with a number of handlers, designed to detect common DNS
+    compatibility and connectivity issues.'''
+
+    response_handlers = DNSSECQuery.response_handlers + \
+            [
+                    AddServerCookieOnBADCOOKIE(),
+                    RemoveEDNSOptionOnRcodeHandler(dns.rcode.FORMERR),
+                    DisableEDNSOnFormerrHandler(),
+                    DisableEDNSOnRcodeHandler(),
+                    ChangeTimeoutOnTimeoutHandler(2.0, 2),
+                    ReduceUDPMaxPayloadOnTimeoutHandler(512, 2),
+                    RemoveEDNSOptionOnTimeoutHandler(4),
+                    ClearEDNSFlagOnTimeoutHandler(dns.flags.DO, 5),
+                    DisableEDNSOnTimeoutHandler(6),
+            ]
+    # For timeouts:
+    #  1 - no change
+    #  2 - reduce udp max payload to 512; change timeout to 2 second
+    #  3 - 
+    #  4 - remove EDNS option (if any); change timeout to 1 second
+    #  5 - clear DO flag;
+    #  6 - disable EDNS
+
+    query_timeout = 1.0
+    max_attempts = 6
+    lifetime = 16.0
+
+
 def _get_dns_cookie_option(cookie=None):
     if cookie is None:
         r = random.getrandbits(64)
@@ -80,7 +111,7 @@ def _init_stub_resolver(tm, explicit_delegations, odd_ports):
 
 def _init_full_resolver(tm, explicit_delegations, odd_ports):
     quick_query = QuickDNSSECQuery.add_mixin(CustomQueryMixin).add_server_cookie(COOKIE_STANDIN)
-    diagnostic_query = DiagnosticQuery.add_mixin(CustomQueryMixin).add_server_cookie(COOKIE_STANDIN)
+    diagnostic_query = CustomDiagnosticQuery.add_mixin(CustomQueryMixin).add_server_cookie(COOKIE_STANDIN)
 
     # now that we have the hints, make resolver a full resolver instead of a stub
     hints = get_root_hints()
